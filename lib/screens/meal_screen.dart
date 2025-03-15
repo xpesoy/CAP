@@ -1,5 +1,110 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
+// API 응답을 파싱하기 위한 모델 클래스
+class MealResponse {
+  final List<MealInfo> mealServiceDietInfo;
+
+  MealResponse({required this.mealServiceDietInfo});
+
+  factory MealResponse.fromJson(Map<String, dynamic> json) {
+    List<dynamic> rows = [];
+    
+    // API 응답 구조에 따라 데이터 추출
+    if (json.containsKey('mealServiceDietInfo')) {
+      final List<dynamic> infoList = json['mealServiceDietInfo'];
+      for (var info in infoList) {
+        if (info.containsKey('row')) {
+          rows.addAll(info['row']);
+        }
+      }
+    }
+    
+    return MealResponse(
+      mealServiceDietInfo: rows.map((e) => MealInfo.fromJson(e)).toList(),
+    );
+  }
+}
+
+class MealInfo {
+  final String mealDate;       // 급식일자
+  final String mealType;       // 식사코드
+  final String mealName;       // 식사명
+  final String mealContents;   // 급식내용
+
+  MealInfo({
+    required this.mealDate,
+    required this.mealType,
+    required this.mealName, 
+    required this.mealContents
+  });
+
+  factory MealInfo.fromJson(Map<String, dynamic> json) {
+    return MealInfo(
+      mealDate: json['MLSV_YMD'] ?? '',
+      mealType: json['MMEAL_SC_CODE'] ?? '',
+      mealName: json['MMEAL_SC_NM'] ?? '',
+      mealContents: json['DDISH_NM'] ?? '',
+    );
+  }
+
+  // 급식 내용을 리스트로 변환 (각 메뉴 항목을 분리)
+  List<String> getMealContentsList() {
+    return mealContents
+        .replaceAll('<br/>', '\n')
+        .split('\n')
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+  }
+}
+
+// API 서비스 클래스
+class MealApiService {
+  static const String baseUrl = 'https://open.neis.go.kr/hub/mealServiceDietInfo';
+  static const String apiKey = 'd07f995a158c46b4abd01cf3acc903d9'; // 실제 사용 시 발급받은 API 키로 변경 필요
+
+  // 시작일부터 종료일까지의 급식 데이터 조회
+  static Future<List<MealInfo>> getMealsByPeriod({
+    required String atptOfcdcScCode, // 시도교육청코드
+    required String sdSchulCode,     // 학교코드
+    required DateTime fromDate,
+    required DateTime toDate,
+  }) async {
+    final String fromDateStr = DateFormat('yyyyMMdd').format(fromDate);
+    final String toDateStr = DateFormat('yyyyMMdd').format(toDate);
+
+    final response = await http.get(Uri.parse(
+      '$baseUrl?KEY=$apiKey&Type=json&pIndex=1&pSize=100'
+      '&ATPT_OFCDC_SC_CODE=$atptOfcdcScCode'
+      '&SD_SCHUL_CODE=$sdSchulCode'
+      '&MLSV_FROM_YMD=$fromDateStr'
+      '&MLSV_TO_YMD=$toDateStr'
+    ));
+
+    if (response.statusCode == 200) {
+      final Map<String, dynamic> data = json.decode(response.body);
+      
+      // 에러 응답 처리
+      if (data.containsKey('RESULT')) {
+        if (data['RESULT']['CODE'] != 'INFO-000') {
+          throw Exception('API 에러: ${data['RESULT']['MESSAGE']}');
+        }
+      }
+      
+      // 데이터가 없는 경우
+      if (!data.containsKey('mealServiceDietInfo')) {
+        return [];
+      }
+      
+      return MealResponse.fromJson(data).mealServiceDietInfo;
+    } else {
+      throw Exception('급식 데이터를 불러오는데 실패했습니다');
+    }
+  }
+}
 
 class MealScreen extends StatefulWidget {
   @override
@@ -11,12 +116,53 @@ class _MealScreenState extends State<MealScreen> {
   late List<DateTime> _weekDays;
   final List<String> _koreanDays = ['월', '화', '수', '목', '금'];
   final List<String> _mealTypes = ['조식', '중식', '석식'];
+  final Map<String, String> _mealTypeCodes = {'조식': '1', '중식': '2', '석식': '3'};
+  
+  // API 요청 관련 상수
+  final String _atptOfcdcScCode = 'J10'; // 충청남도교육청 (실제 코드로 변경 필요)
+  final String _sdSchulCode = '8140089'; // 천안중앙고등학교 (실제 코드로 변경 필요)
+  
+  // 급식 데이터 저장
+  List<MealInfo> _mealInfoList = [];
+  bool _isLoading = false;
+  String _errorMessage = '';
   
   @override
   void initState() {
     super.initState();
     _selectedDate = DateTime.now();
     _weekDays = _getWeekDays(_selectedDate);
+    _fetchMealData();
+  }
+
+  // 급식 데이터 불러오기
+  Future<void> _fetchMealData() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
+
+    try {
+      final fromDate = _weekDays.first;
+      final toDate = _weekDays.last;
+      
+      final mealData = await MealApiService.getMealsByPeriod(
+        atptOfcdcScCode: _atptOfcdcScCode,
+        sdSchulCode: _sdSchulCode,
+        fromDate: fromDate,
+        toDate: toDate,
+      );
+      
+      setState(() {
+        _mealInfoList = mealData;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = '급식 정보를 불러오는데 실패했습니다: ${e.toString()}';
+        _isLoading = false;
+      });
+    }
   }
 
   @override
@@ -31,7 +177,40 @@ class _MealScreenState extends State<MealScreen> {
             _buildWeekSelector(),
             SizedBox(height: 16),
             Expanded(
-              child: _buildMealTable(),
+              child: _isLoading
+                  ? Center(child: CircularProgressIndicator())
+                  : _errorMessage.isNotEmpty
+                      ? _buildErrorView()
+                      : _buildMealTable(),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorView() {
+    return Center(
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
+            SizedBox(height: 16),
+            Text(
+              _errorMessage,
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.red[700]),
+            ),
+            SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: _fetchMealData,
+              child: Text('다시 시도'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Color(0xFF0D47A1),
+                foregroundColor: Colors.white,
+              ),
             ),
           ],
         ),
@@ -55,14 +234,14 @@ class _MealScreenState extends State<MealScreen> {
       ),
       child: Row(
         children: [
-                   Container(
+          Container(
             height: 40,
             width: 40,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
               image: DecorationImage(
                 image: AssetImage('assets/images/logo.jpg'),
-                fit: BoxFit.cover, // 로고를 박스 크기에 맞게 조절
+                fit: BoxFit.cover,
               ),
             ),
           ),
@@ -77,13 +256,11 @@ class _MealScreenState extends State<MealScreen> {
           ),
           Spacer(),
           IconButton(
-            icon: Icon(Icons.notifications_none_outlined, 
-                 color: Color(0xFF0D47A1)),
-            onPressed: () {},
+            icon: Icon(Icons.refresh, color: Color(0xFF0D47A1)),
+            onPressed: _fetchMealData,
           ),
           IconButton(
-            icon: Icon(Icons.settings_outlined, 
-                 color: Color(0xFF0D47A1)),
+            icon: Icon(Icons.settings_outlined, color: Color(0xFF0D47A1)),
             onPressed: () {},
           ),
         ],
@@ -92,27 +269,20 @@ class _MealScreenState extends State<MealScreen> {
   }
 
   List<DateTime> _getWeekDays(DateTime date) {
-    // 주어진 날짜의 요일을 확인 (월: 1, 화: 2, ... 일: 7)
     int weekday = date.weekday;
-    
-    // 해당 주의 월요일 계산
     DateTime monday = date.subtract(Duration(days: weekday - 1));
-    
-    // 월요일부터 금요일까지의 날짜 리스트 생성
     List<DateTime> weekDays = List.generate(
       5, 
       (index) => monday.add(Duration(days: index))
     );
-    
     return weekDays;
   }
 
-  // 토/일요일 처리 (가장 가까운 주로 이동)
   DateTime _handleWeekendSelection(DateTime date) {
-    if (date.weekday == 6) { // 토요일
-      return date.add(Duration(days: 2)); // 다음주 월요일
-    } else if (date.weekday == 7) { // 일요일
-      return date.add(Duration(days: 1)); // 다음주 월요일
+    if (date.weekday == 6) {
+      return date.add(Duration(days: 2));
+    } else if (date.weekday == 7) {
+      return date.add(Duration(days: 1));
     }
     return date;
   }
@@ -142,6 +312,7 @@ class _MealScreenState extends State<MealScreen> {
               setState(() {
                 _selectedDate = _weekDays.first.subtract(Duration(days: 7));
                 _weekDays = _getWeekDays(_selectedDate);
+                _fetchMealData();
               });
             },
           ),
@@ -161,8 +332,9 @@ class _MealScreenState extends State<MealScreen> {
             icon: Icon(Icons.chevron_right, color: Color(0xFF0D47A1)),
             onPressed: () {
               setState(() {
-                _selectedDate = _weekDays.last.add(Duration(days: 3)); // 금요일 + 3일 = 다음 주 월요일
+                _selectedDate = _weekDays.last.add(Duration(days: 3));
                 _weekDays = _getWeekDays(_selectedDate);
+                _fetchMealData();
               });
             },
           ),
@@ -211,9 +383,9 @@ class _MealScreenState extends State<MealScreen> {
     );
     if (picked != null) {
       setState(() {
-        // 토/일요일인 경우 처리
         _selectedDate = _handleWeekendSelection(picked);
         _weekDays = _getWeekDays(_selectedDate);
+        _fetchMealData();
       });
     }
   }
@@ -351,7 +523,24 @@ class _MealScreenState extends State<MealScreen> {
 
   Widget _buildMealCell(int mealTypeIndex, int dayIndex) {
     DateTime cellDate = _weekDays[dayIndex];
-    final meals = _getSampleMeals(mealTypeIndex, dayIndex);
+    String formattedDate = DateFormat('yyyyMMdd').format(cellDate);
+    String mealTypeCode = _mealTypeCodes[_mealTypes[mealTypeIndex]] ?? '';
+    
+    // API에서 가져온 데이터 중 해당 날짜, 해당 식사 유형에 맞는 데이터 찾기
+    MealInfo? mealInfo = _mealInfoList.firstWhere(
+      (meal) => meal.mealDate == formattedDate && meal.mealType == mealTypeCode,
+      orElse: () => MealInfo(
+        mealDate: formattedDate,
+        mealType: mealTypeCode,
+        mealName: _mealTypes[mealTypeIndex],
+        mealContents: '',
+      ),
+    );
+    
+    List<String> mealContents = mealInfo.getMealContentsList();
+    if (mealContents.isEmpty) {
+      mealContents = ['급식 정보가 없습니다'];
+    }
     
     // 현재 날짜인지 확인
     final bool isToday = _isToday(cellDate);
@@ -369,15 +558,15 @@ class _MealScreenState extends State<MealScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            ...meals.map((menu) => 
+            ...mealContents.map((menu) => 
               Padding(
                 padding: EdgeInsets.symmetric(vertical: 2),
                 child: Text(
                   menu,
                   style: TextStyle(
                     fontSize: 12,
-                    fontWeight: menu == meals.first ? FontWeight.w500 : FontWeight.normal,
-                    color: menu == meals.first 
+                    fontWeight: menu == mealContents.first ? FontWeight.w500 : FontWeight.normal,
+                    color: menu == mealContents.first 
                         ? Colors.black.withOpacity(0.8) 
                         : Colors.black.withOpacity(0.6),
                   ),
@@ -395,37 +584,18 @@ class _MealScreenState extends State<MealScreen> {
     DateTime now = DateTime.now();
     return date.year == now.year && date.month == now.month && date.day == now.day;
   }
-  
-  List<String> _getSampleMeals(int mealTypeIndex, int dayIndex) {
-    final breakfastMenus = [
-      ["백미밥", "미역국", "계란말이"],
-      ["흑미밥", "김치찌개", "멸치볶음"],
-      ["잡곡밥", "북어국", "애호박볶음"],
-      ["백미밥", "콩나물국", "진미채볶음"],
-      ["보리밥", "된장찌개", "무생채"],
-    ];
-    
-    final lunchMenus = [
-      ["백미밥", "육개장", "야채튀김", "배추김치", "요구르트"],
-      ["짜장밥", "계란국", "단무지", "깍두기", "바나나"],
-      ["김치볶음밥", "미소국", "만두", "열무김치", "사과"],
-      ["백미밥", "부대찌개", "감자전", "배추김치", "수박"],
-      ["비빔밥", "콩나물국", "잡채", "총각김치", "딸기"],
-    ];
-    
-    final dinnerMenus = [
-      ["백미밥", "시금치국", "고등어구이"],
-      ["현미밥", "청국장", "두부조림"],
-      ["백미밥", "감자국", "불고기"],
-      ["잡곡밥", "미역국", "오징어볶음"],
-      ["백미밥", "어묵탕", "제육볶음"],
-    ];
-    
-    switch (mealTypeIndex) {
-      case 0: return breakfastMenus[dayIndex];
-      case 1: return lunchMenus[dayIndex];
-      case 2: return dinnerMenus[dayIndex];
-      default: return [];
-    }
-  }
+}
+
+// 앱의 메인 진입점
+void main() {
+  runApp(MaterialApp(
+    title: '학교 급식 정보',
+    theme: ThemeData(
+      primaryColor: Color(0xFF0D47A1),
+      scaffoldBackgroundColor: Color(0xFFF5F7FA),
+      fontFamily: 'NotoSansKR',
+    ),
+    home: MealScreen(),
+    debugShowCheckedModeBanner: false,
+  ));
 }
