@@ -1,7 +1,65 @@
+// 1. 먼저 SharedPreferences를 사용하기 위한 의존성을 pubspec.yaml에 추가
+// shared_preferences: ^2.2.0
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+
+// 2. 알레르기 정보를 담은 클래스 추가
+class AllergyInfo {
+  static const Map<int, String> allergyMap = {
+    1: '난류',
+    2: '우유',
+    3: '메밀',
+    4: '땅콩',
+    5: '대두',
+    6: '밀',
+    7: '고등어',
+    8: '게',
+    9: '새우',
+    10: '돼지고기',
+    11: '복숭아',
+    12: '토마토',
+    13: '아황산류',
+    14: '호두',
+    15: '닭고기',
+    16: '쇠고기',
+    17: '오징어',
+    18: '조개류',
+  };
+  
+  // 알레르기 번호로부터 알레르기명 가져오기
+  static String getAllergyName(int code) {
+    return allergyMap[code] ?? '기타';
+  }
+  
+  // 텍스트에서 알레르기 번호 추출
+  static List<int> extractAllergyCodes(String menuText) {
+    List<int> codes = [];
+    
+    // 괄호 안의 숫자 추출 정규식
+    RegExp regExp = RegExp(r'\(([0-9\.\s]+)\)');
+    Match? match = regExp.firstMatch(menuText);
+    
+    if (match != null && match.groupCount >= 1) {
+      String allergyText = match.group(1) ?? '';
+      List<String> allergyStrings = allergyText.split('.');
+      
+      for (String code in allergyStrings) {
+        try {
+          int allergyCode = int.parse(code.trim());
+          codes.add(allergyCode);
+        } catch (e) {
+          // 숫자가 아닌 경우 무시
+        }
+      }
+    }
+    
+    return codes;
+  }
+}
 
 class MealScreen extends StatefulWidget {
   @override
@@ -24,16 +82,39 @@ class _MealScreenState extends State<MealScreen> {
   final String _apiKey = "d07f995a158c46b4abd01cf3acc903d9";
   final String _eduOfficeCode = "N10"; // 교육청 코드 
   final String _schoolCode = "8140070";
-    // 급식 데이터 저장 변수 - 2차원 맵으로 [날짜][식사코드] 형식으로 저장
+  // 급식 데이터 저장 변수 - 2차원 맵으로 [날짜][식사코드] 형식으로 저장
   Map<String, Map<String, List<String>>> _mealData = {};
   bool _isLoading = false;
+  
+  // 알레르기 관련 변수 추가
+  Set<int> _selectedAllergies = {};
   
   @override
   void initState() {
     super.initState();
     _selectedDate = DateTime.now();
     _weekDays = _getWeekDays(_selectedDate);
+    _loadAllergySettings();
     _fetchMealData();
+  }
+  
+  // 알레르기 설정 로드
+  Future<void> _loadAllergySettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _selectedAllergies = Set<int>.from(
+        prefs.getStringList('selected_allergies')?.map((e) => int.parse(e)) ?? []
+      );
+    });
+  }
+  
+  // 알레르기 설정 저장
+  Future<void> _saveAllergySettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      'selected_allergies', 
+      _selectedAllergies.map((e) => e.toString()).toList()
+    );
   }
 
   @override
@@ -76,8 +157,8 @@ class _MealScreenState extends State<MealScreen> {
           ),
         ],
       ),
-child: Row(
-          children: [
+      child: Row(
+        children: [
           Container(
             height: 40,
             width: 40,
@@ -85,33 +166,158 @@ child: Row(
               borderRadius: BorderRadius.circular(8),
               image: DecorationImage(
                 image: AssetImage('assets/images/logo.jpg'),
-                fit: BoxFit.cover, // 로고를 박스 크기에 맞게 조절
+                fit: BoxFit.cover,
               ),
             ),
           ),
+          SizedBox(width: 12),
+          Text(
+            '천안중앙고등학교 급식표',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF0D47A1),
+            ),
+          ),
+          Spacer(),
+          IconButton(
+            icon: Icon(Icons.notifications_none_outlined, 
+                color: Color(0xFF0D47A1)),
+            onPressed: () {},
+          ),
+          // 알레르기 설정 아이콘 버튼 추가
+          IconButton(
+            icon: Icon(Icons.medical_services_outlined, 
+                color: Color(0xFF0D47A1)),
+            onPressed: () => _showAllergySettingsDialog(),
+            tooltip: '알레르기 설정',
+          ),
+          IconButton(
+            icon: Icon(Icons.settings_outlined, 
+                color: Color(0xFF0D47A1)),
+            onPressed: () {},
+          ),
+        ],
+      ),
+    );
+  }
 
-            SizedBox(width: 12),
-            Text(
-              '천안중앙고등학교 급식표',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFF0D47A1),
+  // 알레르기 설정 다이얼로그
+  Future<void> _showAllergySettingsDialog() async {
+    await showDialog(
+      context: context,
+      builder: (context) {
+        // 임시 선택 상태 저장
+        Set<int> tempSelectedAllergies = Set.from(_selectedAllergies);
+        
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Row(
+                children: [
+                  Icon(Icons.medical_services, color: Color(0xFF0D47A1)),
+                  SizedBox(width: 8),
+                  Text('알레르기 설정'),
+                ],
               ),
-            ),
-            Spacer(),
-            IconButton(
-              icon: Icon(Icons.notifications_none_outlined, 
-                  color: Color(0xFF0D47A1)),
-              onPressed: () {},
-            ),
-            IconButton(
-              icon: Icon(Icons.settings_outlined, 
-                  color: Color(0xFF0D47A1)),
-              onPressed: () {},
-            ),
-          ],
-        ),
+              content: Container(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '알레르기가 있는 항목을 선택하세요.',
+                      style: TextStyle(
+                        color: Colors.grey[700],
+                        fontSize: 14,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Container(
+                      height: 1,
+                      color: Colors.grey.withOpacity(0.3),
+                    ),
+                    SizedBox(height: 8),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (int i = 1; i <= 18; i++)
+                              FilterChip(
+                                label: Text(
+                                  '${i}. ${AllergyInfo.getAllergyName(i)}',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: tempSelectedAllergies.contains(i) 
+                                        ? Colors.white 
+                                        : Colors.black87,
+                                  ),
+                                ),
+                                selected: tempSelectedAllergies.contains(i),
+                                onSelected: (selected) {
+                                  setState(() {
+                                    if (selected) {
+                                      tempSelectedAllergies.add(i);
+                                    } else {
+                                      tempSelectedAllergies.remove(i);
+                                    }
+                                  });
+                                },
+                                selectedColor: Color(0xFF0D47A1),
+                                backgroundColor: Colors.grey.withOpacity(0.1),
+                                checkmarkColor: Colors.white,
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 16),
+                    Container(
+                      height: 1,
+                      color: Colors.grey.withOpacity(0.3),
+                    ),
+                    SizedBox(height: 16),
+                    Text(
+                      '* 선택한 알레르기 항목이 포함된 메뉴는 빨간색으로 표시됩니다.',
+                      style: TextStyle(
+                        color: Colors.red,
+                        fontSize: 13,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  child: Text('취소'),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+                ElevatedButton(
+                  child: Text('저장'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Color(0xFF0D47A1),
+                  ),
+                  onPressed: () {
+                    // 메인 상태 업데이트
+                    this.setState(() {
+                      _selectedAllergies = tempSelectedAllergies;
+                    });
+                    
+                    // 설정 저장
+                    _saveAllergySettings();
+                    
+                    Navigator.of(context).pop();
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -632,22 +838,30 @@ child: Row(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              ...meals.map((menu) => 
-                Padding(
+              ...meals.map((menu) {
+                // 알레르기 코드 추출
+                List<int> allergyCodes = AllergyInfo.extractAllergyCodes(menu);
+                
+                // 알레르기 포함 여부 확인
+                bool containsSelectedAllergy = allergyCodes.any((code) => _selectedAllergies.contains(code));
+                
+                return Padding(
                   padding: EdgeInsets.symmetric(vertical: 3),
                   child: Text(
                     menu,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: menu == meals.first ? FontWeight.w600 : FontWeight.normal,
-                      color: menu == meals.first 
-                          ? Colors.black.withOpacity(0.8) 
-                          : Colors.black.withOpacity(0.7),
+                      color: containsSelectedAllergy 
+                          ? Colors.red 
+                          : (menu == meals.first 
+                              ? Colors.black.withOpacity(0.8) 
+                              : Colors.black.withOpacity(0.7)),
                     ),
                     textAlign: TextAlign.center,
                   ),
-                )
-              ).toList(),
+                );
+              }).toList(),
             ],
           ),
         ),
@@ -679,6 +893,41 @@ child: Row(
     }
   }
 
+  // 알레르기 정보 아이콘
+  Widget _buildAllergyLegend() {
+    if (_selectedAllergies.isEmpty) return SizedBox.shrink();
+    
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, size: 16, color: Colors.red),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '빨간색으로 표시된 메뉴는 설정한 알레르기 유발 성분을 포함하고 있습니다.',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.red,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   String _formatDayNumber(DateTime date) {
     return '${date.month}/${date.day}';
   }
@@ -691,5 +940,76 @@ child: Row(
   // 최대값 계산 helper 함수
   double max(double a, double b) {
     return a > b ? a : b;
+  }
+}
+
+// 알레르기 정보 카드 UI
+class AllergyInfoCard extends StatelessWidget {
+  final Set<int> selectedAllergies;
+  
+  const AllergyInfoCard({Key? key, required this.selectedAllergies}) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context) {
+    if (selectedAllergies.isEmpty) return SizedBox.shrink();
+    
+    // 선택된 알레르기 정보만 표시
+    List<Widget> allergyTags = selectedAllergies.map((code) {
+      return Container(
+        margin: EdgeInsets.only(right: 8, bottom: 8),
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.red.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: Colors.red.withOpacity(0.3)),
+        ),
+        child: Text(
+          '${code}. ${AllergyInfo.getAllergyName(code)}',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.red,
+          ),
+        ),
+      );
+    }).toList();
+    
+    return Container(
+      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 4,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, size: 16, color: Colors.red),
+              SizedBox(width: 8),
+              Text(
+                '선택한 알레르기 성분',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
+                  color: Colors.red,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 8),
+          Wrap(
+            children: allergyTags,
+          ),
+        ],
+      ),
+    );
   }
 }
