@@ -58,7 +58,7 @@ class _HomeScreenState extends State<HomeScreen> {
         _isCustomTimetable = prefs.getBool('is_custom_timetable') ?? false;
       });
       
-      // 사용자 설정을 로드한 후 데이터 가져오기
+      // 사용자 설정을 로드한 후, 데이터 가져오기
       _fetchTodayData();
     } catch (e) {
       print('사용자 설정 로드 실패: $e');
@@ -821,23 +821,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   fontSize: 14,
                                 ),
                               ),
-                              if (_allergyInfo.isNotEmpty) ...[
-                                Spacer(),
-                                Container(
-                                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: Color(0xFFE3F2FD),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    _allergyInfo,
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: Color(0xFF0D47A1),
-                                    ),
-                                  ),
-                                ),
-                              ],
+                              // 알레르기 정보 표시 부분 제거
                             ],
                           ),
                         ),
@@ -871,7 +855,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ),
                                 ),
                               ],
-                            ),
+                              ),
                           );
                         }).toList(),
                         
