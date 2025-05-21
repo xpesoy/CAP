@@ -25,11 +25,10 @@ class MainScreen extends StatefulWidget {
   @override
   _MainScreenState createState() => _MainScreenState();
 }
-
 class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;  // 현재 선택된 탭 인덱스
 
-  // 화면 목록 - 콜백 함수를 사용하기 위해 수정 필요
+  // 화면 목록 - 콜백 함수를 사용하기 위해 수정
   late List<Widget> _screens;
   
   @override
